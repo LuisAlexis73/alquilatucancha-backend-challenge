@@ -1,5 +1,6 @@
-import { Inject } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject } from '@nestjs/common';
 import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
+import * as moment from 'moment';
 
 import {
   ClubWithAvailability,
@@ -20,13 +21,30 @@ export class GetAvailabilityHandler
   ) {}
 
   async execute(query: GetAvailabilityQuery): Promise<ClubWithAvailability[]> {
+    if (!query.placeId || query.placeId.trim().length === 0) {
+      throw new HttpException('PlaceId is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!query.date || !moment(query.date).isValid()) {
+      throw new HttpException('Invalid date format', HttpStatus.BAD_REQUEST);
+    }
+
     // Obtener todos los clubes
     const clubs = await this.alquilaTuCanchaClient.getClubs(query.placeId);
+    if (!clubs || clubs.length === 0) {
+      throw new HttpException(
+        `No clubs found for placeId: ${query.placeId}`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
 
     // Procesamos todos los clubes
     const clubsPromises = clubs.map(async (club) => {
       // Obtener las canchas para el club
       const courts = await this.alquilaTuCanchaClient.getCourts(club.id);
+      if (!courts || courts.length === 0) {
+        return null;
+      }
 
       // Procesamos todas las canchas de este club
       const courtsPromises = courts.map(async (court) => {
@@ -39,7 +57,7 @@ export class GetAvailabilityHandler
 
         return {
           ...court,
-          available: slots,
+          available: slots || [],
         };
       });
 
@@ -53,6 +71,16 @@ export class GetAvailabilityHandler
     });
 
     // Esperamos que se resulevan las promesas de clubes
-    return await Promise.all(clubsPromises);
+    const results = (await Promise.all(clubsPromises)).filter(
+      (club): club is ClubWithAvailability => club !== null,
+    );
+    if (results.length === 0) {
+      throw new HttpException(
+        'No available courts found for the specified date',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return results;
   }
 }
