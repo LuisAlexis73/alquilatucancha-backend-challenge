@@ -20,27 +20,39 @@ export class GetAvailabilityHandler
   ) {}
 
   async execute(query: GetAvailabilityQuery): Promise<ClubWithAvailability[]> {
-    const clubs_with_availability: ClubWithAvailability[] = [];
+    // Obtener todos los clubes
     const clubs = await this.alquilaTuCanchaClient.getClubs(query.placeId);
-    for (const club of clubs) {
+
+    // Procesamos todos los clubes
+    const clubsPromises = clubs.map(async (club) => {
+      // Obtener las canchas para el club
       const courts = await this.alquilaTuCanchaClient.getCourts(club.id);
-      const courts_with_availability: ClubWithAvailability['courts'] = [];
-      for (const court of courts) {
+
+      // Procesamos todas las canchas de este club
+      const courtsPromises = courts.map(async (court) => {
+        // Obtener los slots para la cancha
         const slots = await this.alquilaTuCanchaClient.getAvailableSlots(
           club.id,
           court.id,
           query.date,
         );
-        courts_with_availability.push({
+
+        return {
           ...court,
           available: slots,
-        });
-      }
-      clubs_with_availability.push({
-        ...club,
-        courts: courts_with_availability,
+        };
       });
-    }
-    return clubs_with_availability;
+
+      // Esperamos que se resulevan las promesas
+      const courtsWithAvailability = await Promise.all(courtsPromises);
+
+      return {
+        ...club,
+        courts: courtsWithAvailability,
+      };
+    });
+
+    // Esperamos que se resulevan las promesas de clubes
+    return await Promise.all(clubsPromises);
   }
 }
